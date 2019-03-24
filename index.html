@@ -1,0 +1,428 @@
+<html>
+	<head>
+		<meta http-equiv="content-type" content="text/html; charset=utf-8">
+		<link href="//fonts.googleapis.com/css?family=Open+Sans|Open+Sans+Condensed:300" rel="stylesheet">
+		<script src="//cdnjs.cloudflare.com/ajax/libs/echarts/4.1.0/echarts.min.js"></script>
+
+		<style>
+			html body {width: 100%; font-family: 'Open Sans', sans-serif; background: #000000; color: #ffffff; padding:0; margin: 0 }
+			#content { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; align-content: stretch; }
+			#header { width: 100%; display: flex;}
+			#header-left {flex: 1; margin: 15px;}
+
+			#msg {flex: 1; margin: 15px; text-align: center;}
+			.err { background-color: #ff8888 }
+			.info {}
+
+			#selector { flex: 1; margin: 15px; text-align: right; }
+			#data-container {font-family: 'Open Sans Condensed'; width: 100%; max-width: 100vh; display: flex; flex-direction: row; flex: 1; }
+			#data1 { padding: 0.3vh 5vh; flex-grow: 1; }
+			#data2 { padding: 0.3vh 5vh; display: flex; flex-direction: column; flex-grow: 1; }
+			.data2-item { padding: 0.3vh; flex-grow: 1; }
+			.data {}
+			.data-lg { font-size: 25vh; }
+			.data-lg-d { font-size: 2.5vh; }
+			.data-sm { font-size: 6vh; }
+			.data-sm-d { font-size: 2.5vh; }
+			.unit { display: inline; font-size: 3vh; }
+			#chart { position: relative; width:100%; flex: 1; display:block; width: 100%; }
+
+
+		@media (orientation: portrait) {
+			#data-container { flex-direction: column; }
+			#data2 { flex-direction: row; }
+			.data-lg { font-size: 18vh; }
+			.data-lg-d { font-size: 2.5vh; }
+			.data-sm { font-size: 5vh; }
+			.data-sm-d { font-size: 2.5vh; }
+			.unit { display: inline; font-size: 2.5vh; }
+		}
+
+		</style>
+
+		<title>Thermometer</title>
+	</head>
+	<body>
+		<div id="content">
+			<div id="header">
+				<div id="header-left">&nbsp;</div>
+				<div id="msg"></div>
+				<div id="selector">Earlier data: <select id="sel" onchange="data_load()"></select></div>
+			</div>
+
+			<div id="data-container">
+				<div id="data1">
+					<div class="data1-item">
+						<div class="data-lg-d" id="curname"></div>
+						<div class="data-lg" id="curtemp"></div>
+					</div>
+				</div>
+
+				<div id="data2">
+					<div class="data2-item">
+						<div class="data-sm-d">Trend:</div>
+						<div class="data-sm" id="trend"></div>
+					</div>
+					<div class="data2-item">
+						<div class="data-sm-d">Duration:</div>
+						<div class="data-sm" id="dur"></div>
+					</div>
+					<div class="data2-item">
+						<div class="data-sm-d" id="auxname"></div>
+						<div class="data-sm" id="auxtemp"></div>
+					</div>
+				</div>
+			</div>
+
+			<div id="chart"></div>
+		</div>
+
+		<script type="text/javascript">
+///////////////////////////////////////////////////////////////////////////////
+// configuration
+var update_interval_s = 10;
+var data_dir = "data/";
+var index_file = "data/index.csv";
+var stat_len_m = 15;
+var default_zoom_m = 30;
+var session_act_time_m = 10;
+
+///////////////////////////////////////////////////////////////////////////////
+var rows_loaded = 0;
+
+var chart_option = {
+	dataset: {
+		sourceHeader: true,
+	},
+	tooltip: {
+		trigger: 'axis',
+	},
+	grid: {
+		top: "5%",
+		bottom: 80,
+	},
+	xAxis: {
+		type: 'time',
+	},
+	yAxis: {
+		type: 'value',
+		min: 20,
+	},
+	dataZoom: [{
+		type: 'inside',
+		end: 100
+	}, {
+		start: 0,
+		end: 100,
+	}],
+	series: [
+		{
+			type:'line',
+			smooth:true,
+			smoothMonotone: 'none',
+			symbol: 'none',
+			sampling: 'average',
+			encode: {x:0, y:1},
+		},
+		{
+			type:'line',
+			smooth:true,
+			smoothMonotone: 'none',
+			symbol: 'none',
+			sampling: 'average',
+			encode: {x:0, y:2},
+		},
+	],
+};
+
+////////////////////////////////////////////////////////////////////////////
+// set up on-resize handler to redraw chart on media size change
+var chart = echarts.init(document.getElementById('chart'),"dark");
+
+var resize_timer;
+function resize_chart() {
+	chart.resize();
+}
+window.addEventListener("resize", function(ev) {
+	clearTimeout(resize_timer);
+	resize_timer = setTimeout(resize_chart, 100);
+});
+
+////////////////////////////////////////////////////////////////////////////
+// helper functions
+
+// show error message
+function msg(text, cls) {
+	var msg = document.getElementById('msg');
+	msg.className = cls;
+	msg.innerHTML = text;
+}
+
+// HTTP GET
+function ld(fn, onload) {
+	var req = new XMLHttpRequest();
+	req.onreadystatechange = function() {
+		if (req.readyState != 4) return;
+		if (req.status == 200) {
+			onload(req.responseText);
+		} else {
+			onload(null);
+		}
+	};
+	req.open('GET', fn, true);
+	req.setRequestHeader("Cache-Control", "max-age=0");
+	req.send();
+}
+
+////////////////////////////////////////////////////////////////////////////
+// session selector combo box
+
+// fill session selector with HTTP GET response
+function sel_onload(data) {
+	if (data === null) {
+		msg("Error loading session list", "err");
+		return;
+	}
+	var s = document.getElementById('sel');
+	s.innerHTML = "";
+
+	var lines = data.split("\n");
+	if (lines.length < 2) {
+		msg("Invalid session list", "err");
+		return;
+	}
+
+	for (var i=lines.length-1; i>=1; i--) {
+		var fields = lines[i].split(",");
+		if (fields.length != 2) continue;
+		s.innerHTML += '<option value="' + fields[1] + '">' + fields[0] + '</option>';
+	}
+
+	if (s.selectedIndex == -1) {
+		s.selectedIndex = 0;
+	}
+	data_load();
+}
+
+// request session list
+function sel_load() {
+	ld(index_file, sel_onload);
+}
+
+////////////////////////////////////////////////////////////////////////////
+// chart data functions
+
+var load_timer;
+
+// request loading chart data (using selected file in combo box)
+function data_load() {
+	clearTimeout(load_timer);
+	var s = document.getElementById('sel');
+	if (s.selectedIndex == -1) return;
+	chart_file = data_dir+s.value;
+	ld(chart_file, data_onload);
+}
+
+// request update of chart data
+function data_update() {
+	ld(chart_file, data_onupdate);
+}
+
+// parse HTTP GET response into js object
+function data_parse(data) {
+	if (data === null) {
+		msg("Error loading data", "err");
+		return false;
+	}
+
+	var lines = data.split("\n");
+	if (lines.length < 1) {
+		msg("Invalid data", "err");
+		return false;
+	}
+
+	var hdr = lines[0].split(",");
+	if (hdr.length < 2) return false;
+	var d = [];
+
+	for (var i=1; i<lines.length; i++) {
+		var fields = lines[i].split(",");
+		if (fields.length != hdr.length) continue;
+
+		fields[0] = Date.parse(fields[0]);
+		if (isNaN(fields[0])) continue;
+
+		for (var j=1; j<fields.length; j++) {
+			fields[j] = parseFloat(fields[j]);
+			if (isNaN(fields[j])) fields[j] = null;
+		}
+
+		d.push(fields);
+	}
+
+	return {"hdr":hdr, "data":d};
+}
+
+// on-load callback of data_load
+function data_onload(data) {
+	var d = data_parse(data);
+	if (d === false) {
+		// reload
+		load_timer = setTimeout(data_load, 1000 * update_interval_s);
+		return;
+	}
+
+	stat_update(d);
+
+	chart_option.dataset.source = [d.hdr].concat(d.data);
+
+	var start = d.data[d.data.length-1][0]-default_zoom_m*60*1000;
+	if (start < d.data[0][0])
+		start = d.data[0][0];
+	chart_option.dataZoom[0].startValue = start;
+
+	chart.clear();
+	chart.setOption(chart_option);
+
+	rows_loaded = d.data.length;
+
+	load_timer = setTimeout(data_update, 1000 * update_interval_s);
+}
+
+// on-load callback of data_update
+function data_onupdate(data) {
+	d = data_parse(data);
+	if (d === false || d.data.length < rows_loaded) {
+		// reload
+		load_timer = setTimeout(data_load, 1000 * update_interval_s);
+		return;
+	}
+	if (d.data.length > rows_loaded) {
+		stat_update(d);
+
+		// append loaded data (do not touch existing data as it
+		// would re-draw the graph then)
+		for (var i=rows_loaded; i<d.data.length; i++) {
+			chart_option.dataset.source.push(d.data[i]);
+		}
+		chart.setOption(chart_option);
+		rows_loaded = d.data.length;
+	}
+
+	load_timer = setTimeout(data_update, 1000 * update_interval_s);
+}
+
+////////////////////////////////////////////////////////////////////////////
+// statistics section functions
+
+// clear statistics
+function stat_clear() {
+	document.getElementById('trend').innerHTML="-";
+	document.getElementById('dur').innerHTML="-";
+	document.getElementById('curname').innerHTML="";
+	document.getElementById('curtemp').innerHTML="";
+	document.getElementById('auxtemp').innerHTML="";
+	document.getElementById('auxname').innerHTML="";
+	msg("", "");
+}
+
+// update statistics
+function stat_update(d) {
+	if (d.data.length < 2) {
+		stat_clear();
+		return;
+	}
+
+	if (Date.now() - d.data[d.data.length-1][0] > session_act_time_m) {
+		msg("Session is not active anymore!", "info");
+	} else {
+		msg("", "");
+	}
+
+	// last sample
+	var last = d.data[d.data.length-1];
+
+	// last main temperature
+	var ecn = document.getElementById('curname');
+	var ect = document.getElementById('curtemp');
+	if (d.hdr.length > 2 && last.length > 2 && last[1] !== null) {
+		ecn.innerHTML = d.hdr[1]+":";
+		ect.innerHTML = (last[1]).toFixed(1)+'&#8203;<div class="unit">&deg;C</div>';
+	} else {
+		ecn.innerHTML = "";
+		ect.innerHTML = "";
+	}
+
+	// last aux temperature
+	var ean = document.getElementById('auxname');
+	var eat = document.getElementById('auxtemp');
+	if (d.hdr.length > 2 && last.length > 2 && last[2] !== null) {
+		ean.innerHTML = d.hdr[2]+":";
+		eat.innerHTML = (last[2]).toFixed(1)+'&#8203;<div class="unit">&deg;C</div>';
+	} else {
+		ean.innerHTML = "";
+		eat.innerHTML = "";
+	}
+
+	// statistics: linear regression of last 15min of data
+	var stat_x=[];
+	var stat_y=[];
+	for (var i=0; i<d.data.length; i++) {
+		if (d.data[i][1] !== null && last[0] - d.data[i][0] < stat_len_m*60*1000) {
+			stat_x.push(d.data[i][0]);
+			stat_y.push(d.data[i][1]);
+		}
+	}
+
+	var es = document.getElementById('trend');
+	if (stat_x.length > 2) {
+		lr = linearRegression(stat_x, stat_y);
+		es.innerHTML = (lr['slope']*1000*60*15).toFixed(0) + '&#8203;<div class="unit">&deg;C/'+stat_len_m+'min</div>';
+	} else {
+		es.innerHTML = "";
+	}
+
+	// duration
+	var ed = document.getElementById('dur');
+	if (d.data.length>3) {
+		var dur = (last[0] - d.data[0][0])/1000/60;
+		ed.innerHTML = Math.floor(dur/60) + '&#8203;<div class="unit">h</div> ' + Math.floor(dur%60) + '&#8203;<div class="unit">min</div>';
+	} else {
+		ed.innerHTML = "";
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////
+// linear regression
+// https://stackoverflow.com/questions/6195335/linear-regression-in-javascript
+function linearRegression(x,y){
+	var lr = {};
+	var n = y.length;
+	var sum_x = 0;
+	var sum_y = 0;
+	var sum_xy = 0;
+	var sum_xx = 0;
+	var sum_yy = 0;
+
+	for (var i = 0; i < y.length; i++) {
+		sum_x += x[i];
+		sum_y += y[i];
+		sum_xy += (x[i]*y[i]);
+		sum_xx += (x[i]*x[i]);
+		sum_yy += (y[i]*y[i]);
+	}
+
+	lr['slope'] = (n * sum_xy - sum_x * sum_y) / (n*sum_xx - sum_x * sum_x);
+	lr['intercept'] = (sum_y - lr.slope * sum_x)/n;
+	lr['r2'] = Math.pow((n*sum_xy - sum_x*sum_y)/Math.sqrt((n*sum_xx-sum_x*sum_x)*(n*sum_yy-sum_y*sum_y)),2);
+
+	return lr;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////
+// start loading
+sel_load();
+
+		</script>
+	</body>
+</html>
