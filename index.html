@@ -333,7 +333,7 @@ function stat_update(d) {
 		return;
 	}
 
-	if (Date.now() - d.data[d.data.length-1][0] > session_act_time_m) {
+	if (Date.now() - d.data[d.data.length-1][0] > session_act_time_m * 60 * 1000) {
 		msg("Session is not active anymore!", "info");
 	} else {
 		msg("", "");
