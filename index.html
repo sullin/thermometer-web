@@ -15,7 +15,7 @@
 			.info {}
 
 			#selector { flex: 1; margin: 15px; text-align: right; }
-			#data-container {font-family: 'Open Sans Condensed'; width: 100%; max-width: 100vh; display: flex; flex-direction: row; flex: 1; }
+			#data-container {position: relative; font-family: 'Open Sans Condensed'; width: 100%; max-width: 100vh; display: flex; flex-direction: row; flex: 1; }
 			#data1 { padding: 0.3vh 5vh; flex-grow: 1; }
 			#data2 { padding: 0.3vh 5vh; display: flex; flex-direction: column; flex-grow: 1; }
 			.data2-item { padding: 0.3vh; flex-grow: 1; }
@@ -27,6 +27,8 @@
 			.unit { display: inline; font-size: 3vh; }
 			#chart { position: relative; width:100%; flex: 1; display:block; width: 100%; }
 
+			#overlay { display: none; position: absolute; width: 100%; height: 100%; top:0; bottom: 0; left: 0; right: 0; background-color: rgba(0,0,0,0.7); z-index: 2; text-align: center;}
+			#overlay span { position: relative; top: 25%; padding: 2vh; font-family: 'Open Sans Condensed'; font-size: 9vh; text-shadow: 0 0 0.5vh #000000;}
 
 		@media (orientation: portrait) {
 			#data-container { flex-direction: column; }
@@ -71,6 +73,9 @@
 						<div class="data-sm-d" id="auxname"></div>
 						<div class="data-sm" id="auxtemp"></div>
 					</div>
+				</div>
+				<div id="overlay">
+					<span>Session is not active</span>
 				</div>
 			</div>
 
@@ -323,6 +328,7 @@ function stat_clear() {
 	document.getElementById('curtemp').innerHTML="";
 	document.getElementById('auxtemp').innerHTML="";
 	document.getElementById('auxname').innerHTML="";
+	document.getElementById('overlay').style.display = "none";
 	msg("", "");
 }
 
@@ -333,11 +339,13 @@ function stat_update(d) {
 		return;
 	}
 
-	if (Date.now() - d.data[d.data.length-1][0] > session_act_time_m * 60 * 1000) {
-		msg("Session is not active anymore!", "info");
+	var ovr = document.getElementById('overlay');
+	if (Date.now() - d.data[d.data.length-1][0] > 1000*60*session_act_time_m) {
+		ovr.style.display = "block";
 	} else {
-		msg("", "");
+		ovr.style.display = "none";
 	}
+	msg("", "");
 
 	// last sample
 	var last = d.data[d.data.length-1];
