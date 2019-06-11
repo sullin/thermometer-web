@@ -254,8 +254,9 @@ function data_parse(data) {
 		var fields = lines[i].split(",");
 		if (fields.length != hdr.length) continue;
 
-		fields[0] = Date.parse(fields[0]);
-		if (isNaN(fields[0])) continue;
+		var f = fields[0].split(/[^0-9]/);
+		if (f.length != 6) continue;
+		fields[0] = new Date (f[0], f[1]-1, f[2], f[3], f[4], f[5]);
 
 		for (var j=1; j<fields.length; j++) {
 			fields[j] = parseFloat(fields[j]);
