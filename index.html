@@ -378,7 +378,7 @@ function stat_update(d) {
 	var stat_y=[];
 	for (var i=0; i<d.data.length; i++) {
 		if (d.data[i][1] !== null && last[0] - d.data[i][0] < stat_len_m*60*1000) {
-			stat_x.push(d.data[i][0]);
+			stat_x.push(d.data[i][0] - last[0]);
 			stat_y.push(d.data[i][1]);
 		}
 	}
